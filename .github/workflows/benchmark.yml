@@ -1,55 +1,113 @@
-name: Performance Benchmark
+name: Benchmark Express Performance
+
 on:
   pull_request:
-    branches: [ master ]
+    branches:
+      - main
 
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0  # This fetches all history for all branches
-        
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18.x'
-        
-    - name: Install dependencies
-      run: npm install
-        
-    - name: Run master branch benchmark
-      run: |
-        git checkout master
-        npm run benchmark
-        mv benchmark-results.json master-benchmark.json
+    permissions:
+      issues: write
+      pull-requests: write
 
-    - name: Run PR branch benchmark
-      run: |
-        git checkout ${{ github.event.pull_request.head.sha }}
-        npm run benchmark
-      
-    - name: Compare results
-      run: node scripts/compare-benchmark.js
-      
-    - name: Comment PR
-      uses: actions/github-script@v6
-      with:
-        script: |
-          const fs = require('fs');
-          const benchmarkResults = fs.readFileSync('benchmark-comparison.json', 'utf8');
-          const results = JSON.parse(benchmarkResults);
-          
-          let comment = '## Performance Benchmark Results\n\n';
-          comment += results.summary + '\n\n';
-          comment += '### Detailed Results\n\n';
-          comment += results.details;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.name,
-            body: comment
-          });
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Cache Node.js dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Cache wrk
+        uses: actions/cache@v3
+        with:
+          path: /usr/local/bin/wrk
+          key: ${{ runner.os }}-wrk-1
+
+      - name: Install wrk
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc wrk tmux
+
+      # Run benchmarks on master branch
+      - name: Checkout and benchmark master
+        run: |
+          git checkout master
+          tmux new-session -d -s master-session 'node benchmark/ultimate-express.js'
+          sleep 3
+          wrk -t 1 -c 200 -d 30 http://localhost:3000 > master-benchmark.txt
+          tmux kill-session -t master-session
+
+      # Run benchmarks on PR branch
+      - name: Benchmark PR branch
+        run: |
+          git checkout ${{ github.event.pull_request.head.sha }}
+          tmux new-session -d -s pr-session 'node benchmark/ultimate-express.js'
+          sleep 3
+          wrk -t 1 -c 200 -d 30 http://localhost:3000 > pr-benchmark.txt
+          tmux kill-session -t pr-session
+
+      - name: Compare Results
+        id: benchmark_output
+        run: |
+          # Parse Requests/sec values
+          pr_requests=$(grep "Requests/sec" pr-benchmark.txt | awk '{print $2}')
+          master_requests=$(grep "Requests/sec" master-benchmark.txt | awk '{print $2}')
+          requests_ratio=$(echo "scale=2; $pr_requests / $master_requests" | bc)
+
+          # Parse and convert latency values
+          pr_latency_raw=$(grep "Latency" pr-benchmark.txt | awk '{print $2}')
+          master_latency_raw=$(grep "Latency" master-benchmark.txt | awk '{print $2}')
+
+          # Convert latencies to ms if in us
+          if [[ "$pr_latency_raw" == *us ]]; then
+            pr_latency=$(echo "scale=3; ${pr_latency_raw%us} / 1000" | bc)
+          else
+            pr_latency=${pr_latency_raw%ms}
+          fi
+
+          if [[ "$master_latency_raw" == *us ]]; then
+            master_latency=$(echo "scale=3; ${master_latency_raw%us} / 1000" | bc)
+          else
+            master_latency=${master_latency_raw%ms}
+          fi
+
+          # Calculate performance change
+          perf_change=$(echo "scale=2; ($pr_requests - $master_requests) / $master_requests * 100" | bc)
+
+          {
+            echo "### Performance Comparison (PR vs Master)"
+            printf "| %-18s | %-15s | %-15s | %-15s |\n" "Metric" "PR Branch" "Master" "Change"
+            printf "|--------------------|-----------------|-----------------|----------------|\n"
+            printf "| %-18s | %-15s | %-15s | %+.2f%% |\n" "Requests/sec" "$pr_requests" "$master_requests" "$perf_change"
+            printf "| %-18s | %-13sms | %-13sms | %-15s |\n" "Avg Latency" "$pr_latency" "$master_latency" "$(echo "scale=2; ($master_latency - $pr_latency) / $master_latency * 100" | bc)%"
+          } >> benchmark_summary.md
+
+          if (( $(echo "$perf_change < -5" | bc -l) )); then
+            echo "⚠️ **Performance Regression Detected!** This PR shows a significant performance drop." >> benchmark_summary.md
+          fi
+
+      - name: Comment on Pull Request
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## Benchmark Results
+            
+            $(cat benchmark_summary.md)
