@@ -1,56 +1,61 @@
-const Benchmark = require('benchmark');
-const suite = new Benchmark.Suite;
+const { describe, it } = require('node:test');
+const assert = require('node:assert');
+const { calculatePerformanceChange, generateReport } = require('../scripts/compare-benchmark');
 
-// Import your main functions/components to test
-const { criticalFunction1, criticalFunction2 } = require('../src/core');
+describe('Benchmark System Tests', () => {
+  it('should correctly calculate performance changes', () => {
+    const baseline = {
+      results: [{
+        name: 'test1',
+        hz: 100
+      }]
+    };
+    
+    const current = {
+      results: [{
+        name: 'test1',
+        hz: 90
+      }]
+    };
 
-// Test data
-const TEST_DATA = {
-  small: { /* small dataset */ },
-  medium: { /* medium dataset */ },
-  large: { /* large dataset */ }
-};
+    const changes = calculatePerformanceChange(baseline, current);
+    assert.equal(changes['test1'].percentChange, -10);
+    assert.equal(changes['test1'].baseline, 100);
+    assert.equal(changes['test1'].current, 90);
+  });
 
-// Benchmark critical function 1
-suite.add('criticalFunction1 - small dataset', () => {
-  criticalFunction1(TEST_DATA.small);
-})
-.add('criticalFunction1 - medium dataset', () => {
-  criticalFunction1(TEST_DATA.medium);
-})
-.add('criticalFunction1 - large dataset', () => {
-  criticalFunction1(TEST_DATA.large);
-})
+  it('should detect performance regressions correctly', () => {
+    const changes = {
+      'test1': {
+        percentChange: -6,
+        baseline: 100,
+        current: 94
+      }
+    };
 
-// Benchmark critical function 2
-.add('criticalFunction2 - small dataset', () => {
-  criticalFunction2(TEST_DATA.small);
-})
-.add('criticalFunction2 - medium dataset', () => {
-  criticalFunction2(TEST_DATA.medium);
-})
-.add('criticalFunction2 - large dataset', () => {
-  criticalFunction2(TEST_DATA.large);
-})
+    const report = generateReport(changes);
+    assert.match(report.summary, /Performance regression detected/);
+  });
 
-.on('cycle', function(event) {
-  console.log(String(event.target));
-})
-.on('complete', function() {
-  console.log('Benchmark complete');
-  const results = {
-    timestamp: new Date().toISOString(),
-    results: this.map(benchmark => ({
-      name: benchmark.name,
-      hz: benchmark.hz,
-      stats: benchmark.stats,
-      times: benchmark.times
-    }))
-  };
-  
-  require('fs').writeFileSync(
-    'benchmark-results.json',
-    JSON.stringify(results, null, 2)
-  );
-})
-.run({ 'async': true }); 
+  it('should handle missing baseline tests', () => {
+    const baseline = {
+      results: [{
+        name: 'test1',
+        hz: 100
+      }]
+    };
+    
+    const current = {
+      results: [{
+        name: 'test1',
+        hz: 90
+      }, {
+        name: 'test2',
+        hz: 80
+      }]
+    };
+
+    const changes = calculatePerformanceChange(baseline, current);
+    assert.equal(Object.keys(changes).length, 1);
+  });
+}); 

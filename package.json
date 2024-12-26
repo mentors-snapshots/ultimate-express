@@ -4,9 +4,9 @@
   "description": "The Ultimate Express. Fastest http server with full Express compatibility, based on uWebSockets.",
   "main": "src/index.js",
   "scripts": {
-    "test": "node tests/index.js",
+    "test": "node tests/index.js && node tests/benchmark.test.js",
     "dev": "node --inspect=9229 demo/index.js",
-    "benchmark": "node tests/benchmark.test.js"
+    "benchmark": "node tests/benchmark-runner.js"
   },
   "engines": {
     "node": ">=18"

@@ -49,21 +49,30 @@ function generateReport(changes) {
   return { summary, details };
 }
 
-// Main execution
-try {
-  const baseline = loadBenchmarkResults('master-benchmark.json');
-  const current = loadBenchmarkResults('benchmark-results.json');
-  
-  const changes = calculatePerformanceChange(baseline, current);
-  const report = generateReport(changes);
-  
-  fs.writeFileSync(
-    'benchmark-comparison.json',
-    JSON.stringify(report, null, 2)
-  );
-  
-  process.exit(0);
-} catch (error) {
-  console.error('Error comparing benchmark results:', error);
-  process.exit(1);
+// Add exports at the end
+module.exports = {
+  loadBenchmarkResults,
+  calculatePerformanceChange,
+  generateReport
+};
+
+// Keep the main execution
+if (require.main === module) {
+  try {
+    const baseline = loadBenchmarkResults('master-benchmark.json');
+    const current = loadBenchmarkResults('benchmark-results.json');
+    
+    const changes = calculatePerformanceChange(baseline, current);
+    const report = generateReport(changes);
+    
+    fs.writeFileSync(
+      'benchmark-comparison.json',
+      JSON.stringify(report, null, 2)
+    );
+    
+    process.exit(0);
+  } catch (error) {
+    console.error('Error comparing benchmark results:', error);
+    process.exit(1);
+  }
 } 
